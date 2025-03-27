@@ -22,13 +22,20 @@ def load_dataset(file_path):
         # Load the dataset
         print(f"\nLoading dataset from: {file_path}")
         df = pd.read_csv(file_path)
+        
+        # Clean column names
+        df.columns = df.columns.str.strip()
+        
         print(f"Total records in dataset: {len(df):,}")
+        print("\nDataset columns:")
+        for col in df.columns:
+            print(f"- {col}")
         
         # Basic preprocessing steps
         # Remove any rows with missing values
         initial_rows = len(df)
         df.dropna(inplace=True)
-        print(f"Records after removing missing values: {len(df):,}")
+        print(f"\nRecords after removing missing values: {len(df):,}")
         print(f"Removed {initial_rows - len(df):,} records with missing values")
         
         # Remove duplicate rows
@@ -44,6 +51,10 @@ def load_dataset(file_path):
         return df
     except Exception as e:
         print(f"Error loading dataset: {e}")
+        print("\nDataset structure:")
+        print(df.head())
+        print("\nColumn names:")
+        print(df.columns.tolist())
         return None
 
 # Preprocess the data
@@ -60,14 +71,29 @@ def preprocess_data(df):
     # Clean column names by removing leading/trailing whitespace
     df.columns = df.columns.str.strip()
     
-    # Separate features and target variable
-    # Assuming 'Label' is the column indicating attack type
-    X = df.drop('Label', axis=1)
-    y = df['Label']
+    # For this dataset, we'll use network flow features to detect anomalies
+    # We'll consider high packet rates and unusual patterns as potential threats
+    feature_columns = [
+        'Flow Duration', 'Total Fwd Packets', 'Total Backward Packets',
+        'Flow Bytes/s', 'Flow Packets/s', 'Flow IAT Mean', 'Flow IAT Std',
+        'Fwd Packets/s', 'Bwd Packets/s', 'Packet Length Mean', 'Packet Length Std',
+        'FIN Flag Count', 'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count',
+        'ACK Flag Count', 'URG Flag Count'
+    ]
     
-    # Handle categorical variables
-    # Convert categorical variables to numeric
-    X = pd.get_dummies(X)
+    # Create labels based on network flow characteristics
+    # Consider high packet rates and unusual patterns as threats
+    df['is_threat'] = (
+        (df['Flow Packets/s'] > 1000) |  # High packet rate
+        (df['Flow Bytes/s'] > 10000) |   # High byte rate
+        (df['Total Fwd Packets'] > 1000) |  # Large number of forward packets
+        (df['SYN Flag Count'] > 100) |    # High number of SYN flags
+        (df['RST Flag Count'] > 50)       # High number of RST flags
+    ).astype(int)
+    
+    # Select features for training
+    X = df[feature_columns]
+    y = df['is_threat']
     
     # Replace infinite values with maximum finite value
     X = X.replace([np.inf, -np.inf], np.nan)
@@ -130,29 +156,27 @@ def format_threat_report(prediction, prediction_proba, features, timestamp=None)
     else:
         severity = "Critical"
     
-    # Extract source and destination ports
-    dst_port = features.get("Destination Port", "Not Available")
-    
     # Create the threat report
     threat_report = {
         "1. Threat Detection Results": {
-            "Boolean Flag": bool(prediction != "BENIGN"),
+            "Boolean Flag": bool(prediction == 1),
             "Threat Score": round(threat_score, 3)
         },
         "2. Threat Classification": {
-            "Attack Type": prediction if prediction != "BENIGN" else "No Attack",
+            "Attack Type": "Suspicious Network Activity" if prediction == 1 else "Normal Traffic",
             "Malware Family": "Unknown",  # Would need additional data for this
-            "Severity Level": severity,
-            "Destination Port": dst_port
+            "Severity Level": severity
         },
         "3. Anomaly Detection Insights": {
             "List of Anomalies": [],
             "Flow Duration": features.get("Flow Duration", "Not Available"),
             "Flow Bytes/s": features.get("Flow Bytes/s", "Not Available"),
-            "Flow Packets/s": features.get("Flow Packets/s", "Not Available")
+            "Flow Packets/s": features.get("Flow Packets/s", "Not Available"),
+            "SYN Flags": features.get("SYN Flag Count", "Not Available"),
+            "RST Flags": features.get("RST Flag Count", "Not Available")
         },
         "4. Suggested Actions": {
-            "Block Port": "Yes" if threat_score > 0.7 else "No",
+            "Block Traffic": "Yes" if threat_score > 0.7 else "No",
             "Isolation Recommendation": "Yes" if threat_score > 0.8 else "No"
         }
     }
@@ -165,6 +189,10 @@ def format_threat_report(prediction, prediction_proba, features, timestamp=None)
         anomalies.append(f"High byte rate: {features.get('Flow Bytes/s', 0):.2f} bytes/s")
     if features.get("Total Fwd Packets", 0) > 1000:
         anomalies.append(f"Large number of forward packets: {features.get('Total Fwd Packets', 0)}")
+    if features.get("SYN Flag Count", 0) > 100:
+        anomalies.append(f"High number of SYN flags: {features.get('SYN Flag Count', 0)}")
+    if features.get("RST Flag Count", 0) > 50:
+        anomalies.append(f"High number of RST flags: {features.get('RST Flag Count', 0)}")
     
     threat_report["3. Anomaly Detection Insights"]["List of Anomalies"] = anomalies
     
@@ -204,7 +232,7 @@ def evaluate_model(model, scaler, X_test, y_test):
     # Find threats
     threats = []
     for i in range(len(y_pred)):
-        if y_pred[i] != "BENIGN":
+        if y_pred[i] == 1:
             threat_report = format_threat_report(
                 y_pred[i],
                 y_pred_proba[i],

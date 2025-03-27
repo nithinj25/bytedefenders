@@ -1,0 +1,23 @@
+.container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.card {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 1rem;
+}
+
+.threat-high {
+    background-color: #dc3545;
+    color: white;
+}
+
+.threat-low {
+    background-color: #28a745;
+    color: white;
+}
